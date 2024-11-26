@@ -1,17 +1,21 @@
 import mido
 from mido import MidiFile, MidiTrack, Message
+import typer
+from pathlib import Path
 
 # Define drum mapping to MIDI notes
 DRUM_MAPPING = {
     'C': 49,  # Crash Cymbal
     'H': 42,  # Closed Hi-Hat
     'S': 38,  # Snare Drum
-    'T': 45,  # Tom (Mid-Tom as default, can be customized)
+    'T': 45,  # Tom
     'B': 36   # Bass Drum
 }
 
-# Function to parse ASCII tabs and generate MIDI track
-def parse_tabs_to_midi(ascii_tabs, bpm=120, include_ghost_notes=True):
+app = typer.Typer()
+
+
+def parse_split_tabs_to_midi(split_tabs: str, bpm=120, include_ghost_notes=True) -> MidiFile:
     midi = MidiFile()
     track = MidiTrack()
     midi.tracks.append(track)
@@ -24,12 +28,32 @@ def parse_tabs_to_midi(ascii_tabs, bpm=120, include_ghost_notes=True):
     ticks_per_beat = midi.ticks_per_beat
     time_per_16th_note = ticks_per_beat // 4
 
-    # Split input into lines and measures
-    lines = ascii_tabs.strip().split('\n')
-    rows = {line[0]: line.split('|')[1:-1] for line in lines}
+    # Parse the split tabs
+    lines = split_tabs.strip().split('\n')
+    grouped_measures = []
+    current_group = []
 
-    # Get the number of measures
-    measure_count = len(rows[next(iter(rows))])
+    for line in lines:
+        if line.strip() == "":
+            if current_group:
+                grouped_measures.append(current_group)
+                current_group = []
+        else:
+            current_group.append(line)
+
+    if current_group:
+        grouped_measures.append(current_group)
+
+    # Build rows for each drum from grouped measures
+    rows = {drum: [] for drum in DRUM_MAPPING.keys()}
+
+    for group in grouped_measures:
+        for line in group:
+            if line[0] in DRUM_MAPPING:
+                rows[line[0]].extend(line[2:].split('|')[:-1])
+
+    # Determine the number of measures
+    measure_count = len(rows[next(iter(rows.keys()))])
 
     # Parse each measure and beat
     for measure_idx in range(measure_count):
@@ -50,25 +74,21 @@ def parse_tabs_to_midi(ascii_tabs, bpm=120, include_ghost_notes=True):
                 track.append(Message('note_on', note=note, velocity=velocity, time=0))
 
             # Add the correct delay after processing all notes
-            if simultaneous_notes:
-                track.append(Message('note_off', note=0, velocity=0, time=time_per_16th_note))
-            else:
-                # Add a rest (no notes played)
-                track.append(Message('note_on', note=0, velocity=0, time=time_per_16th_note))
+            track.append(Message('note_off', note=0, velocity=0, time=time_per_16th_note))
 
     return midi
 
-# Example usage
-ascii_tabs = """
-C|----------------|o-----------o---|------------o---|----------------|
-H|x-x-x-x-x-x-x-x-|x-x-x-x-x-x-x-x-|x-x-x-x-x-x-x-x-|x-x-x-x-x-x-x-x-|
-S|oo-o-o-o-o-oooog|----o-------o---|----o-------o---|----o-------oo--|
-T|----------------|----------------|----------------|--------------oo|
-B|----------------|oo-o-o-o-o------|oo-o-o-o-o------|oo-o-o-o-o------|
-"""
 
-# Parse and save the MIDI file
-midi = parse_tabs_to_midi(ascii_tabs, bpm=120, include_ghost_notes=True)
-output_file = 'drum_tabs_correct_timing.mid'
-midi.save(output_file)  # Save the MIDI file with corrected timing
-print(f"MIDI file saved to {output_file}")
+@app.command()
+def parse(input_tab: str, output_midi: str):
+    """
+    Parse a split tab file into a MIDI file.
+    """
+    split_tabs = Path(input_tab).read_text()
+    midi = parse_split_tabs_to_midi(split_tabs, bpm=120, include_ghost_notes=True)
+    midi.save(output_midi)
+    print(f"MIDI file saved to {output_midi}")
+
+
+if __name__ == "__main__":
+    app()
